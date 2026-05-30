@@ -1,0 +1,32 @@
+# Internal session handoff docs — do not publish.
+HANDOFF.md
+POSITIONING.md
+
+# macOS
+.DS_Store
+
+# Node (only if a JS path is added)
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Build output
+build/
+dist/
+.build/
+
+# Local model weights — NEVER commit (multi-GB). Ship via download-on-first-run.
+models/
+*.gguf
+*.mlx
+*.safetensors
+*.bin
+
+# Local index / embedding caches (per-user, machine-local)
+.shelfseer/
+*.index
+*.faiss
+
+# Runtime temp / test artifacts
+tmp/
+temp-*/
