@@ -9,24 +9,24 @@ import Foundation
 
 public protocol Responder {
     /// Produce an answer to `question`, grounded in `passages` (already ranked,
-    /// highest first).
-    func respond(question: String, passages: [ScoredPassage]) -> Answer
+    /// highest first). Async because a real on-device generator (Apple
+    /// Foundation Models) answers asynchronously; extractive responders simply
+    /// return immediately.
+    func respond(question: String, passages: [ScoredPassage]) async -> Answer
 }
 
 /// The default, generation-free responder. Presents the top passages verbatim
 /// as the answer, each labeled with its source document.
 ///
-/// TODO(local-LLM seam): replace/augment this with a real on-device generator
-/// that reads `question` + `passages` as context and writes a synthesized,
-/// cited answer. Candidate backends, all on-device and owned-not-rented:
-///   • Apple Foundation Models (the system LLM, macOS 26+) — zero download.
-///   • MLX (Apple-silicon native) running a small instruct model.
-///   • llama.cpp with a quantized GGUF (downloaded on first run — see
-///     .gitignore: model weights are never committed).
-/// Whatever the backend, it conforms to `Responder` and the rest of the
-/// pipeline (ingest → index → retrieve) is unchanged. Keep retrieval as the
-/// source of truth and constrain generation to the supplied passages so the
-/// answer stays grounded in the user's own library.
+/// The on-device generator seam is now filled by FoundationModelsResponder
+/// (Apple Foundation Models, macOS 26+, zero download beyond the OS), selected
+/// by ResponderFactory when Apple Intelligence is available and falling back to
+/// this extractive responder otherwise. Other backends (MLX, or llama.cpp with
+/// a quantized GGUF downloaded on first run — see .gitignore: model weights are
+/// never committed) can swap in behind the same `Responder` protocol. Whatever
+/// the backend, retrieval stays the source of truth and generation is
+/// constrained to the supplied passages so the answer stays grounded in the
+/// user's own library.
 public struct ExtractiveResponder: Responder {
     /// How many of the ranked passages to include in the stitched answer.
     public let maxPassages: Int
@@ -35,7 +35,7 @@ public struct ExtractiveResponder: Responder {
         self.maxPassages = max(1, maxPassages)
     }
 
-    public func respond(question: String, passages: [ScoredPassage]) -> Answer {
+    public func respond(question: String, passages: [ScoredPassage]) async -> Answer {
         let used = Array(passages.prefix(maxPassages))
         guard !used.isEmpty else {
             return Answer(
@@ -49,5 +49,24 @@ public struct ExtractiveResponder: Responder {
 
         let preamble = "Here is what your library says about that:\n\n"
         return Answer(text: preamble + body, sources: used)
+    }
+}
+
+public enum ResponderFactory {
+    /// The best available on-device responder. If Apple's Foundation Models
+    /// system LLM is present AND ready (macOS 26+, Apple Intelligence enabled,
+    /// model downloaded), shelfseer generates a synthesized, cited answer
+    /// grounded only in the retrieved passages. Otherwise it falls back to the
+    /// extractive responder, which stitches the top passages verbatim — never
+    /// crashing, never requiring Apple Intelligence, never downloading anything.
+    public static func makeDefault() -> Responder {
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            if let llm = FoundationModelsResponder() {
+                return llm
+            }
+        }
+        #endif
+        return ExtractiveResponder()
     }
 }

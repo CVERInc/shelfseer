@@ -13,12 +13,10 @@ public struct FileIngestor: Ingestor {
     /// File extensions we read as plain text today.
     public static let textExtensions: Set<String> = ["txt", "md", "markdown", "text"]
 
-    // TODO(EPUB seam): shelfseer's sister tool reepub produces EPUB3 from the
-    // paper you own. The natural next ingestion source is those EPUBs: unzip the
-    // container, parse the OPF spine, strip XHTML to plain text, and emit one
-    // Document per chapter (id = "<epubPath>#<spineIndex>", title = chapter
-    // title). It plugs in here behind the same `Ingestor` protocol — Core needs
-    // no other changes. Kept out of this scaffold to avoid an unzip/XML dep now.
+    // EPUB ingestion now lives in EpubIngestor (see EpubIngestor.swift): it
+    // unzips the container, parses the OPF spine, strips XHTML to plain text and
+    // emits one Document per chapter behind this same `Ingestor` protocol —
+    // dependency-free (it shells to /usr/bin/unzip, mirroring reepub's own zip).
 
     public init() {}
 

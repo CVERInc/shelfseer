@@ -71,7 +71,7 @@ final class LibraryModel: ObservableObject {
         guard !q.isEmpty, librarianReady else { return }
         isAnswering = true
         Task.detached { [librarian] in
-            let result = librarian.ask(q)
+            let result = await librarian.ask(q)
             await MainActor.run {
                 self.answer = result
                 self.isAnswering = false

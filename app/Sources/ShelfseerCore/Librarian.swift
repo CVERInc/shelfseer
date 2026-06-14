@@ -19,7 +19,7 @@ public final class Librarian {
 
     public init(chunker: Chunker = ParagraphChunker(),
                 embedder: Embedder = EmbedderFactory.makeDefault(),
-                responder: Responder = ExtractiveResponder(),
+                responder: Responder = ResponderFactory.makeDefault(),
                 ingestor: Ingestor = FileIngestor(),
                 topK: Int = 4) {
         self.chunker = chunker
@@ -74,9 +74,10 @@ public final class Librarian {
         return index.search(queryVector: queryVector, topK: k ?? topK)
     }
 
-    /// The full RAG round-trip: retrieve, then answer.
-    public func ask(_ question: String) -> Answer {
+    /// The full RAG round-trip: retrieve, then answer. Async because the default
+    /// responder may be an on-device generator (Apple Foundation Models).
+    public func ask(_ question: String) async -> Answer {
         let passages = retrieve(question)
-        return responder.respond(question: question, passages: passages)
+        return await responder.respond(question: question, passages: passages)
     }
 }
