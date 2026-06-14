@@ -8,7 +8,7 @@
 
 **No API keys · No subscriptions · No internet · Your library never leaves your machine.**
 
-> ⚠️ **Status.** shelfseer is at the early scaffold stage — a working skeleton, not yet the full experience. This README describes the intended product. Watch the repo for the first feature-complete build.
+> ⚠️ **Status.** shelfseer's offline RAG engine works today — on-device retrieval **and** answer generation, ingesting text folders and EPUBs. What's still early is the *experience* around it: the UI and library management are minimal. This README describes where it's headed.
 
 ## What shelfseer is
 
@@ -36,11 +36,11 @@ A native macOS SwiftUI app (SwiftPM, no Xcode required), themed with CVER's shar
 
 | Stage | Today | Seam for later |
 |---|---|---|
-| **Ingest** | `.txt` / `.md` from a folder | EPUB chapters (from sister tool [reepub](https://github.com/CVERInc/reepub)) |
+| **Ingest** | `.txt` / `.md` folders **and EPUB** (chapters from sister tool [reepub](https://github.com/CVERInc/reepub)) | more formats |
 | **Chunk** | paragraph-packing splitter | sentence/token-aware splitter |
 | **Embed** | Apple `NLEmbedding`, on-device, zero download (deterministic hashing fallback when no model is present) | a stronger local model (e.g. MLX sentence-transformer) |
 | **Index** | in-memory cosine top-k | ANN index (HNSW/IVF) for very large libraries |
-| **Answer** | **extractive** — stitches the top retrieved passages, cited, never hallucinated | a real **on-device LLM** (Apple Foundation Models / MLX / llama.cpp) constrained to the retrieved passages |
+| **Answer** | **on-device LLM** — Apple Foundation Models, constrained to the retrieved passages and cited, with an extractive fallback when Apple Intelligence is unavailable | larger local models (MLX / llama.cpp) |
 
 The intelligence is in the **retrieval**; generation is a swappable final step. Nothing downloads a multi-GB model by default, and nothing ever leaves your Mac.
 
@@ -57,7 +57,7 @@ Build: `cd app && swift build` · Test: `swift run ShelfseerTests` · Bundle: `.
 
 ## Status
 
-Early scaffold. The name and concept are locked; the pipeline is wired end-to-end with simple working defaults, and the real on-device answer generator is the next step. See the repo for progress.
+The engine is real. On Apple-Intelligence-capable Macs it retrieves from your library and generates cited, grounded answers entirely on-device (Apple Foundation Models, with an extractive fallback elsewhere); it ingests `.txt`/`.md` folders and EPUBs. What's still early is the *app* around the engine — the UI and library management are minimal. The name, concept, and architecture are locked. See the repo for progress.
 
 ## License
 
