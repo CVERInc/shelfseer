@@ -1,0 +1,27 @@
+# shelfseer is darwin-only (native SwiftUI + NaturalLanguage on-device models),
+# so CI runs on macOS. It builds the SwiftPM package and runs the framework-free
+# Core test runner (deterministic embedder, no model download, fully offline).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  swift:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build
+        run: swift build
+        working-directory: app
+
+      - name: Run Core tests
+        run: swift run ShelfseerTests
+        working-directory: app

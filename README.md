@@ -8,7 +8,7 @@
 
 **No API keys · No subscriptions · No internet · Your library never leaves your machine.**
 
-> ⚠️ **Status.** shelfseer is at the concept/scaffold stage — not yet usable. This README describes the intended product. Watch the repo for the first working build.
+> ⚠️ **Status.** shelfseer is at the early scaffold stage — a working skeleton, not yet the full experience. This README describes the intended product. Watch the repo for the first feature-complete build.
 
 ## What shelfseer is
 
@@ -30,9 +30,34 @@ The intelligence here lives mostly in **retrieval** — finding the right passag
 
 shelfseer is for querying documents **you own or have the right to read** — your own writing, notes and correspondence, public-domain works, or books you physically own. Everything is processed locally; nothing is ever uploaded. Please respect copyright and the rights of authors and publishers.
 
+## Architecture
+
+A native macOS SwiftUI app (SwiftPM, no Xcode required), themed with CVER's shared design system [Signet](https://github.com/CVERInc/signet). The RAG pipeline lives in a pure-logic `ShelfseerCore` library, built as clean protocol seams so each stage can be upgraded independently:
+
+| Stage | Today | Seam for later |
+|---|---|---|
+| **Ingest** | `.txt` / `.md` from a folder | EPUB chapters (from sister tool [reepub](https://github.com/CVERInc/reepub)) |
+| **Chunk** | paragraph-packing splitter | sentence/token-aware splitter |
+| **Embed** | Apple `NLEmbedding`, on-device, zero download (deterministic hashing fallback when no model is present) | a stronger local model (e.g. MLX sentence-transformer) |
+| **Index** | in-memory cosine top-k | ANN index (HNSW/IVF) for very large libraries |
+| **Answer** | **extractive** — stitches the top retrieved passages, cited, never hallucinated | a real **on-device LLM** (Apple Foundation Models / MLX / llama.cpp) constrained to the retrieved passages |
+
+The intelligence is in the **retrieval**; generation is a swappable final step. Nothing downloads a multi-GB model by default, and nothing ever leaves your Mac.
+
+```
+app/
+├── Package.swift              # ShelfseerCore + ShelfseerApp + ShelfseerTests, depends on Signet
+├── Sources/ShelfseerCore/     # Models, Chunker, Ingestor, Embedder, VectorIndex, Responder, Librarian
+├── Sources/ShelfseerApp/      # SwiftUI window (pick folder → index → ask → answer + sources)
+├── Sources/ShelfseerTests/    # framework-free runner: swift run ShelfseerTests
+└── scripts/build-app.sh       # bundle a double-clickable shelfseer.app
+```
+
+Build: `cd app && swift build` · Test: `swift run ShelfseerTests` · Bundle: `./scripts/build-app.sh`
+
 ## Status
 
-Early development. The name and concept are locked; the implementation has not started. See the repo for progress.
+Early scaffold. The name and concept are locked; the pipeline is wired end-to-end with simple working defaults, and the real on-device answer generator is the next step. See the repo for progress.
 
 ## License
 
