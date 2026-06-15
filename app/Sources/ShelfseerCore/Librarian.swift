@@ -17,11 +17,16 @@ public final class Librarian {
     /// Number of passages retrieved per question before answering. Always kept
     /// >= 1: assigning a non-positive value clamps to 1 (a query that retrieves
     /// nothing is never useful), so the clamp can't be bypassed after init.
+    ///
+    /// Reads and writes are serialized by `topKLock`: the UI may set `topK` on
+    /// the main thread while a background `retrieve`/`ask` reads it, so an
+    /// unguarded stored `Int` would be a data race (caught by ThreadSanitizer).
     public var topK: Int {
-        get { _topK }
-        set { _topK = max(1, newValue) }
+        get { topKLock.withLock { _topK } }
+        set { topKLock.withLock { _topK = max(1, newValue) } }
     }
     private var _topK: Int
+    private let topKLock = NSLock()
 
     public init(chunker: Chunker = ParagraphChunker(),
                 embedder: Embedder = EmbedderFactory.makeDefault(),

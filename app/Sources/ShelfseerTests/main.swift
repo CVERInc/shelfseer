@@ -386,6 +386,46 @@ do {
     }
     check(lib.passageCount == 50, "shared index intact after 200 concurrent asks (no crash/corruption)")
 }
+do {
+    // Data race: the UI may set `topK` (e.g. a slider on the main thread) while a
+    // background `retrieve`/`ask` reads it. With an unguarded stored Int this is
+    // a write-vs-read race — ThreadSanitizer flags `Librarian.topK` get/set.
+    // Hammer concurrent writers + readers; correctness check is the survived
+    // invariant (every observed topK stays clamped >= 1, index uncorrupted).
+    let lib = Librarian(embedder: HashingEmbedder(dimension: 64),
+                        responder: ExtractiveResponder(), topK: 3)
+    lib.index(documents: (0..<20).map {
+        Document(id: "d\($0)", title: "d\($0)", text: "Document \($0) about topic \($0 % 5).")
+    })
+    let racedLow = NSLock()
+    var sawBelowOne = false
+    await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+        let group = DispatchGroup()
+        for t in 0..<16 {
+            group.enter()
+            DispatchQueue.global().async {
+                if t % 2 == 0 {
+                    // Writers: cycle topK, including a non-positive value to keep
+                    // exercising the clamp under contention.
+                    for _ in 0..<4000 { lib.topK = (t % 5) - 1 }
+                } else {
+                    // Readers: retrieve (reads topK) and observe the property.
+                    var localBad = false
+                    for _ in 0..<4000 {
+                        _ = lib.retrieve("topic \(t % 5)")
+                        if lib.topK < 1 { localBad = true }
+                    }
+                    if localBad { racedLow.withLock { sawBelowOne = true } }
+                }
+                group.leave()
+            }
+        }
+        group.notify(queue: .global()) { cont.resume() }
+    }
+    check(!sawBelowOne, "topK never observed below 1 under concurrent writes (clamp holds)")
+    check(lib.topK >= 1, "topK still clamped after concurrent mutation (no torn/raced value)")
+    check(lib.passageCount == 20, "index intact after concurrent topK churn")
+}
 
 // MARK: - FileIngestor: robust title extraction
 

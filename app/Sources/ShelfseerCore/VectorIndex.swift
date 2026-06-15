@@ -111,7 +111,9 @@ public final class VectorIndex: @unchecked Sendable {
     }
 }
 
-private extension NSLock {
+// Module-internal so both VectorIndex and Librarian can serialize their shared
+// mutable state through the same small helper.
+extension NSLock {
     @inline(__always)
     func withLock<T>(_ body: () throws -> T) rethrows -> T {
         lock(); defer { unlock() }
