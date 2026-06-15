@@ -58,6 +58,14 @@ do {
     let far  = Similarity.cosine(q, [0, 0, 1])
     check(near > far, "nearer vector scores above farther one")
 }
+// Length mismatch must NOT silently degrade to a real-looking 0 score: the
+// checked variant returns nil so a dimension bug can't masquerade as
+// "orthogonal / unrelated". (The trapping `cosine` is exercised via the
+// VectorIndex precondition path, which a framework-free runner can't catch.)
+check(Similarity.cosineChecked([1, 2, 3], [1, 2]) == nil,
+      "cosineChecked surfaces a length mismatch as nil, not 0")
+check(Similarity.cosineChecked([1, 0], [0, 1]) == 0,
+      "cosineChecked still computes when lengths match")
 
 // MARK: - VectorIndex top-k ordering
 
@@ -259,6 +267,249 @@ do {
         threw = true
     }
     check(threw, "missing EPUB file throws instead of crashing")
+}
+
+// MARK: - Chunker robustness (no empty passages, pathological input)
+
+print("Chunker robustness")
+do {
+    let c = ParagraphChunker()
+    // Whitespace-only / control-char-only documents emit ZERO passages — never
+    // an empty or blank chunk that would pollute the index.
+    check(c.chunk(Document(id: "ws", title: "ws", text: "   \n\n  \t  \n\n")).isEmpty,
+          "whitespace-only document → no passages")
+    check(c.chunk(Document(id: "e", title: "e", text: "")).isEmpty,
+          "empty document → no passages")
+    // Mixed real + blank paragraphs: only the real ones survive, none empty.
+    let mixed = c.chunk(Document(id: "m", title: "m", text: "real text\n\n   \n\nmore real text"))
+    check(!mixed.isEmpty, "mixed document yields passages")
+    check(mixed.allSatisfy { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty },
+          "no passage is empty or whitespace-only")
+}
+do {
+    // slice(): a single very long word with NO whitespace must still terminate
+    // and stay within the hard budget (no infinite loop, no over-budget chunk).
+    let noSpace = String(repeating: "x", count: 500)
+    let pieces = ParagraphChunker.slice(noSpace, max: 50)
+    check(pieces.count >= 10, "no-whitespace giant word hard-splits into many pieces")
+    check(pieces.allSatisfy { $0.count <= 50 }, "every slice respects the max budget")
+    check(pieces.allSatisfy { !$0.isEmpty }, "no empty slice")
+    // A string at exactly the budget is returned whole.
+    check(ParagraphChunker.slice(String(repeating: "y", count: 50), max: 50) == [String(repeating: "y", count: 50)],
+          "exactly-budget string is one slice")
+}
+
+// MARK: - VectorIndex: thread-safety, dimensions, k > count
+
+print("VectorIndex robustness")
+do {
+    func p(_ n: Int) -> Passage {
+        Passage(id: "p\(n)", documentID: "d", documentTitle: "d", index: n, text: "p\(n)")
+    }
+    // k larger than the number of passages just returns all of them, ranked.
+    let idx = VectorIndex()
+    idx.add(passage: p(1), vector: [1, 0, 0])
+    idx.add(passage: p(2), vector: [0, 1, 0])
+    let all = idx.search(queryVector: [1, 1, 0], topK: 99)
+    check(all.count == 2, "topK > passageCount returns all passages, no crash")
+    check(idx.vectorDimension == 2 + 1, "index learns its vector dimension from the first add")
+    // k <= 0 yields nothing.
+    check(idx.search(queryVector: [1, 0, 0], topK: 0).isEmpty, "topK 0 → no hits")
+    check(idx.search(queryVector: [1, 0, 0], topK: -5).isEmpty, "negative topK → no hits")
+}
+do {
+    // Concurrent add + search must not crash or corrupt the store. Hammer the
+    // index from many threads at once; afterwards the count is exactly right.
+    let idx = VectorIndex()
+    let n = 500
+    await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+        let group = DispatchGroup()
+        for i in 0..<n {
+            group.enter()
+            DispatchQueue.global().async {
+                idx.add(passage: Passage(id: "c\(i)", documentID: "d", documentTitle: "d", index: i, text: "t\(i)"),
+                        vector: [Double(i % 7), Double(i % 3), 1])
+                // Interleave reads while writes are in flight.
+                _ = idx.search(queryVector: [1, 1, 1], topK: 3)
+                _ = idx.count
+                group.leave()
+            }
+        }
+        group.notify(queue: .global()) { cont.resume() }
+    }
+    check(idx.count == n, "concurrent adds all land (no lost updates / no crash)")
+    check(idx.search(queryVector: [1, 1, 1], topK: 5).count == 5, "search after concurrent load is sane")
+}
+do {
+    // removeAll resets the learned dimension so a different-dimension corpus can
+    // be indexed next without tripping the mismatch precondition.
+    let idx = VectorIndex()
+    idx.add(passage: Passage(id: "a", documentID: "d", documentTitle: "d", index: 0, text: "a"), vector: [1, 0, 0])
+    check(idx.vectorDimension == 3, "dimension set to 3")
+    idx.removeAll()
+    check(idx.vectorDimension == nil, "removeAll clears the learned dimension")
+    idx.add(passage: Passage(id: "b", documentID: "d", documentTitle: "d", index: 0, text: "b"), vector: [1, 0])
+    check(idx.vectorDimension == 2, "new corpus can use a new dimension after reset")
+}
+
+// MARK: - Librarian: empty question, topK clamp, concurrent ask
+
+print("Librarian robustness")
+do {
+    let lib = Librarian(embedder: HashingEmbedder(dimension: 128),
+                        responder: ExtractiveResponder(),
+                        topK: 4)
+    lib.index(documents: [Document(id: "d", title: "d", text: "Some content about cats and dogs.")])
+    check(lib.retrieve("   ").isEmpty, "empty / whitespace question retrieves nothing")
+    check(lib.retrieve("").isEmpty, "empty question retrieves nothing")
+    check(!lib.retrieve("cats").isEmpty, "real question retrieves passages")
+    // topK setter cannot be driven non-positive after init.
+    lib.topK = -3
+    check(lib.topK == 1, "topK setter clamps non-positive values to 1")
+    lib.topK = 7
+    check(lib.topK == 7, "topK setter accepts valid values")
+    // explicit non-positive k is clamped too.
+    check(lib.retrieve("cats", topK: 0).count >= 1, "explicit topK 0 is clamped, not zero results")
+}
+do {
+    // Many concurrent asks against one Librarian must not crash (shared index).
+    let lib = Librarian(embedder: HashingEmbedder(dimension: 128),
+                        responder: ExtractiveResponder(), topK: 3)
+    lib.index(documents: (0..<50).map {
+        Document(id: "d\($0)", title: "d\($0)", text: "Document number \($0) about topic \($0 % 5).")
+    })
+    await withTaskGroup(of: Void.self) { tg in
+        for i in 0..<200 {
+            tg.addTask { _ = await lib.ask("topic \(i % 5)") }
+        }
+        await tg.waitForAll()
+    }
+    check(lib.passageCount == 50, "shared index intact after 200 concurrent asks (no crash/corruption)")
+}
+
+// MARK: - FileIngestor: robust title extraction
+
+print("FileIngestor titles")
+do {
+    check(FileIngestor.title(for: URL(fileURLWithPath: "/lib/notes.md")) == "notes",
+          "ordinary file → stem title")
+    check(FileIngestor.title(for: URL(fileURLWithPath: "/lib/README")) == "README",
+          "extensionless file → its name")
+    // A dotfile like ".md" has an EMPTY stem; must not yield an empty title.
+    let dotTitle = FileIngestor.title(for: URL(fileURLWithPath: "/lib/.md"))
+    check(!dotTitle.isEmpty, "dotfile '.md' → non-empty title (not blank)")
+    check(dotTitle == ".md", "dotfile keeps its full name as title")
+    // Trailing slash shouldn't corrupt the title.
+    check(!FileIngestor.title(for: URL(fileURLWithPath: "/lib/journal.txt/")).isEmpty,
+          "trailing slash → still a non-empty title")
+}
+
+// MARK: - FileIngestor: symlink cycle must not hang or duplicate
+
+print("FileIngestor symlinks")
+do {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("shelfseer-sl-\(UUID().uuidString)")
+    let a = root.appendingPathComponent("a")
+    try! fm.createDirectory(at: a, withIntermediateDirectories: true)
+    try! "unique symlink-test content about otters".write(
+        to: a.appendingPathComponent("real.txt"), atomically: true, encoding: .utf8)
+    // A symlink pointing back at its own parent — a cycle if naively followed.
+    try? fm.createSymbolicLink(at: a.appendingPathComponent("loop"),
+                               withDestinationURL: a)
+    let start = Date()
+    let docs = try! FileIngestor().ingest(folder: root)
+    let elapsed = Date().timeIntervalSince(start)
+    check(elapsed < 5, "symlink cycle does not hang ingestion (\(String(format: "%.2f", elapsed))s)")
+    check(docs.filter { $0.text.contains("otters") }.count == 1,
+          "symlink cycle does not duplicate the real file")
+    try? fm.removeItem(at: root)
+}
+
+// MARK: - EPUB: cleanup-on-throw, malformed entities
+
+print("EPUB robustness")
+do {
+    // ingest(epub:) on a directory (not a file) throws notAFile and leaves no
+    // temp work dir behind — the defer-based cleanup fires on every throw path.
+    let fm = FileManager.default
+    let before = (try? fm.contentsOfDirectory(atPath: fm.temporaryDirectory.path))?
+        .filter { $0.hasPrefix("shelfseer-epub-") }.count ?? 0
+    var threw = false
+    do { _ = try EpubIngestor().ingest(epub: fm.temporaryDirectory) } catch { threw = true }
+    check(threw, "ingesting a directory as an EPUB throws notAFile")
+    let after = (try? fm.contentsOfDirectory(atPath: fm.temporaryDirectory.path))?
+        .filter { $0.hasPrefix("shelfseer-epub-") }.count ?? 0
+    check(after <= before, "no orphaned unzip temp dir left behind on the throw path")
+}
+do {
+    // Malformed / non-well-formed XHTML (raw & ampersands, unclosed tags) must
+    // not crash: the regex-free fallback strips tags and still yields text.
+    let bad = "<html><body><p>Tom & Jerry <b>fight</p><p>at 5 < 6 o'clock</body>"
+    let parsed = EpubIngestor.xhtmlToText(bad)
+    check(parsed.text.contains("Tom") && parsed.text.contains("Jerry"),
+          "malformed XHTML still yields body text (fallback strip)")
+    check(parsed.text.contains("5") && parsed.text.contains("6"),
+          "raw '<' in malformed XHTML survives the fallback")
+}
+do {
+    // Entity decoding in the regex-free fallback.
+    let s = EpubIngestor.decodeEntities("a &amp; b &lt;c&gt; &quot;d&quot; &#39;e&#39; &nbsp;f")
+    check(s == "a & b <c> \"d\" 'e'  f", "named & numeric entities decoded in fallback path")
+}
+
+// MARK: - NLWordEmbedder fallback + EmbedderFactory
+
+print("NLWordEmbedder / fallback")
+do {
+    // Factory always returns SOME embedder that produces a fixed-length vector,
+    // whether or not Apple's word-embedding model is present on this machine.
+    let e = EmbedderFactory.makeDefault()
+    check(e.dimension > 0, "default embedder has a positive dimension")
+    let v = e.embed("the quick brown fox")
+    check(v.count == e.dimension, "embedding length matches the declared dimension")
+    // The HashingEmbedder fallback is deterministic and dimension-stable, even
+    // for all-out-of-vocabulary / nonsense input (mean-pooling OOV → safe).
+    let h = HashingEmbedder(dimension: 64)
+    check(h.embed("zzqqxx flumph wibble").count == 64, "hashing fallback honors its dimension on OOV input")
+    check(h.embed("") == [Double](repeating: 0, count: 64), "hashing fallback: empty text → zero vector (no crash)")
+    check(h.embed("Hello") == h.embed("hello"), "hashing fallback is case-insensitive & deterministic")
+    // NLWordEmbedder: if a model exists here, an all-OOV string mean-pools to a
+    // zero vector rather than NaN/crash; if no model, the initializer is nil and
+    // the factory's fallback (above) covers it. Either way: no crash.
+    if let nl = NLWordEmbedder() {
+        let oov = nl.embed("zzqqxx flumph wibble")
+        check(oov.count == nl.dimension, "NLWordEmbedder OOV vector has the right length")
+        check(!oov.contains { $0.isNaN }, "NLWordEmbedder OOV mean-pool produces no NaN")
+        print("  → NLWordEmbedder present (dimension \(nl.dimension))")
+    } else {
+        print("  ⓘ NLWordEmbedder model not present — exercising HashingEmbedder fallback only")
+    }
+}
+
+// MARK: - Generation-failure surfacing (note)
+
+print("Degradation surfacing")
+do {
+    // The reason mapper turns model errors into user-facing, leak-free strings.
+    struct CtxErr: Error, CustomStringConvertible { var description: String { "context window exceeded" } }
+    struct SafeErr: Error, CustomStringConvertible { var description: String { "guardrail: unsafe content" } }
+    #if canImport(FoundationModels)
+    if #available(macOS 26.0, *) {
+        check(FoundationModelsResponder.reason(for: CtxErr()).contains("too long"),
+              "context-overflow error maps to a 'too long' reason")
+        check(FoundationModelsResponder.reason(for: SafeErr()).contains("safety"),
+              "guardrail error maps to a 'safety' reason")
+    } else {
+        check(true, "FoundationModels reason mapper not compiled (macOS < 26) — skipped")
+    }
+    #else
+    check(true, "FoundationModels reason mapper not importable — skipped")
+    #endif
+    // An Answer with a note round-trips the note (the surfacing channel itself).
+    let a = Answer(text: "x", sources: [], note: "fell back")
+    check(a.note == "fell back", "Answer carries a non-fatal degradation note")
+    check(Answer(text: "x", sources: []).note == nil, "happy-path Answer has no note")
 }
 
 // MARK: - FoundationModels responder (guarded smoke)
