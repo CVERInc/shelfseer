@@ -218,12 +218,32 @@ public struct EpubIngestor: Ingestor {
         for block in ["</p>", "</div>", "</h1>", "</h2>", "</h3>", "</h4>", "</li>", "<br>", "<br/>", "<br />"] {
             s = s.replacingOccurrences(of: block, with: "\n\n", options: .caseInsensitive)
         }
+        // Strip tags, but only treat "<" as a tag opener when it's plausibly the
+        // start of a real tag/comment/PI (next char is a letter, "/", "!" or "?").
+        // A bare "<" used as a less-than sign (e.g. "5 < 6") is kept as content,
+        // so malformed XHTML doesn't silently swallow text after a stray "<".
+        let chars = Array(s)
         var out = ""
         var inTag = false
-        for ch in s {
-            if ch == "<" { inTag = true; continue }
-            if ch == ">" { inTag = false; continue }
-            if !inTag { out.append(ch) }
+        var i = 0
+        while i < chars.count {
+            let ch = chars[i]
+            if inTag {
+                if ch == ">" { inTag = false }
+                i += 1
+                continue
+            }
+            if ch == "<" {
+                let next = (i + 1 < chars.count) ? chars[i + 1] : " "
+                if next.isLetter || next == "/" || next == "!" || next == "?" {
+                    inTag = true
+                    i += 1
+                    continue
+                }
+                // Not a tag — a literal less-than. Keep it.
+            }
+            out.append(ch)
+            i += 1
         }
         return Self.collapseBlankLines(decodeEntities(out))
     }
@@ -260,7 +280,7 @@ public struct EpubIngestor: Ingestor {
     /// Decode the handful of XML/HTML entities a stripped document is likely to
     /// carry. (XMLParser already decodes entities in element text; this is for
     /// the regex-free fallback path.)
-    static func decodeEntities(_ s: String) -> String {
+    public static func decodeEntities(_ s: String) -> String {
         var r = s
         let map = ["&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"",
                    "&apos;": "'", "&#39;": "'", "&nbsp;": " "]
