@@ -82,6 +82,14 @@ struct ContentView: View {
                 .cverPanel(cornerRadius: CVERRadius.control)
                 .onSubmit { if model.canAsk { model.ask() } }
 
+            Stepper(value: $model.topK, in: LibraryModel.topKRange) {
+                Text("Top \(model.topK)")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(theme.textDim)
+            }
+            .help("How many of your library's passages to retrieve per question.")
+            .fixedSize()
+
             Button("Ask") { model.ask() }
                 .buttonStyle(.cver())
                 .disabled(!model.canAsk || model.isAnswering)
@@ -124,6 +132,12 @@ struct ContentView: View {
                 .padding(CVERSpacing.lg)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cverPanel()
+
+            if let note = answer.note {
+                Label(note, systemImage: "info.circle")
+                    .font(.callout)
+                    .foregroundStyle(theme.warning)
+            }
 
             if !answer.sources.isEmpty {
                 Text("Sources")

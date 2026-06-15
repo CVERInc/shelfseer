@@ -21,6 +21,17 @@ final class LibraryModel: ObservableObject {
     @Published var answer: Answer?
     @Published var isAnswering = false
 
+    /// How many passages to retrieve per question (exposed in the UI). Kept in
+    /// the valid range and pushed straight through to the librarian.
+    static let topKRange: ClosedRange<Int> = 1...10
+    @Published var topK: Int = 4 {
+        didSet {
+            let clamped = min(max(Self.topKRange.lowerBound, topK), Self.topKRange.upperBound)
+            if clamped != topK { topK = clamped; return }   // re-enter once, then settle
+            librarian.topK = clamped
+        }
+    }
+
     private let librarian = Librarian()
 
     var isIndexing: Bool {
