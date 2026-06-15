@@ -14,8 +14,14 @@ public final class Librarian {
     private let ingestor: Ingestor
     private let index = VectorIndex()
 
-    /// Number of passages retrieved per question before answering.
-    public var topK: Int
+    /// Number of passages retrieved per question before answering. Always kept
+    /// >= 1: assigning a non-positive value clamps to 1 (a query that retrieves
+    /// nothing is never useful), so the clamp can't be bypassed after init.
+    public var topK: Int {
+        get { _topK }
+        set { _topK = max(1, newValue) }
+    }
+    private var _topK: Int
 
     public init(chunker: Chunker = ParagraphChunker(),
                 embedder: Embedder = EmbedderFactory.makeDefault(),
@@ -26,7 +32,7 @@ public final class Librarian {
         self.embedder = embedder
         self.responder = responder
         self.ingestor = ingestor
-        self.topK = max(1, topK)
+        self._topK = max(1, topK)
     }
 
     /// Passages currently indexed.
@@ -69,9 +75,16 @@ public final class Librarian {
     /// Retrieve the most relevant passages for `question` without synthesizing
     /// an answer — useful for a "find passages" mode and for tests.
     public func retrieve(_ question: String, topK k: Int? = nil) -> [ScoredPassage] {
-        guard !index.isEmpty else { return [] }
+        // An empty / whitespace-only question has no query vector worth
+        // searching with — return nothing rather than ranking the whole library
+        // by noise. (The App also guards this, but Core must be safe on its own.)
+        guard !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !index.isEmpty else { return [] }
+        // Clamp an explicit k the same way topK is clamped, so callers can't ask
+        // the index for a non-positive count.
+        let effectiveK = max(1, k ?? topK)
         let queryVector = embedder.embed(question)
-        return index.search(queryVector: queryVector, topK: k ?? topK)
+        return index.search(queryVector: queryVector, topK: effectiveK)
     }
 
     /// The full RAG round-trip: retrieve, then answer. Async because the default

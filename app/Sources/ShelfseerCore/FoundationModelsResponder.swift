@@ -52,15 +52,41 @@ public struct FoundationModelsResponder: Responder {
             let response = try await session.respond(to: prompt)
             let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else {
-                return await fallback.respond(question: question, passages: passages)
+                return Self.degraded(reason: "the on-device model returned an empty answer",
+                                     await fallback.respond(question: question, passages: passages))
             }
             // Cite the same passages we grounded the generation in.
             return Answer(text: text, sources: used)
         } catch {
             // Guardrail trip, context overflow, or any transient model error:
-            // degrade to the extractive answer rather than failing the query.
-            return await fallback.respond(question: question, passages: passages)
+            // degrade to the extractive answer rather than failing the query —
+            // but SURFACE the failure (note) instead of silently hiding it, so
+            // the user knows the answer is verbatim passages, not a synthesis.
+            return Self.degraded(reason: Self.reason(for: error),
+                                 await fallback.respond(question: question, passages: passages))
         }
+    }
+
+    /// Tag an extractive fallback answer with why generation was skipped, so the
+    /// degradation is visible to the user rather than masquerading as a normal
+    /// synthesized answer.
+    private static func degraded(reason: String, _ answer: Answer) -> Answer {
+        Answer(text: answer.text,
+               sources: answer.sources,
+               note: "Showing the most relevant passages verbatim: \(reason).")
+    }
+
+    /// A short, user-facing reason string for a generation error, without
+    /// leaking internal detail. Context-overflow is the common one worth naming.
+    public static func reason(for error: Error) -> String {
+        let desc = String(describing: error).lowercased()
+        if desc.contains("context") || desc.contains("exceed") || desc.contains("token") {
+            return "the question and passages were too long for the on-device model"
+        }
+        if desc.contains("guard") || desc.contains("safety") || desc.contains("unsafe") {
+            return "the on-device model declined to answer (safety guardrail)"
+        }
+        return "the on-device model was unavailable for this question"
     }
 
     /// System instructions: answer ONLY from the provided passages, cite them by

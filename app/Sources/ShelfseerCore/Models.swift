@@ -53,9 +53,15 @@ public struct ScoredPassage: Identifiable, Sendable {
 public struct Answer: Sendable {
     public let text: String
     public let sources: [ScoredPassage]
+    /// A non-fatal diagnostic to surface to the user — e.g. that the on-device
+    /// LLM failed and the answer fell back to verbatim passages. `nil` on the
+    /// happy path. We never silently hide a generation failure: the query still
+    /// succeeds (degraded), but the user is told why the answer looks different.
+    public let note: String?
 
-    public init(text: String, sources: [ScoredPassage]) {
+    public init(text: String, sources: [ScoredPassage], note: String? = nil) {
         self.text = text
         self.sources = sources
+        self.note = note
     }
 }
