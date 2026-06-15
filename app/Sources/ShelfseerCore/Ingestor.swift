@@ -38,12 +38,27 @@ public struct FileIngestor: Ingestor {
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
             documents.append(Document(
                 id: url.path,
-                title: url.deletingPathExtension().lastPathComponent,
+                title: Self.title(for: url),
                 text: text
             ))
         }
         // Stable ordering so re-ingests and tests are deterministic.
         documents.sort { $0.id < $1.id }
         return documents
+    }
+
+    /// A human-readable title for a file. Uses the file stem, but degrades
+    /// gracefully on edge cases the naive `deletingPathExtension().lastPathComponent`
+    /// gets wrong: a dotfile like `.md` (whose stem is empty) keeps its full
+    /// name; an extensionless file keeps its name; trailing slashes are ignored.
+    public static func title(for url: URL) -> String {
+        let full = url.standardizedFileURL.lastPathComponent          // e.g. "notes.md", ".md", "README"
+        let stem = url.deletingPathExtension().lastPathComponent      // e.g. "notes", "",   "README"
+        let trimmedStem = stem.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedStem.isEmpty { return trimmedStem }
+        // Stem is empty (e.g. a dotfile ".md") — fall back to the full name,
+        // then to the path, so a Document always carries a non-empty title.
+        let trimmedFull = full.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedFull.isEmpty ? url.path : trimmedFull
     }
 }

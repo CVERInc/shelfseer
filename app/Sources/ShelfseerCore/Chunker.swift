@@ -49,13 +49,19 @@ public struct ParagraphChunker: Chunker {
         }
         flush()
 
-        return packed.enumerated().map { idx, text in
-            Passage(id: "\(document.id)#\(idx)",
-                    documentID: document.id,
-                    documentTitle: document.title,
-                    index: idx,
-                    text: text)
-        }
+        // Defensive invariant: never emit an empty or whitespace-only passage,
+        // whatever the input. `flush` already trims, but keep the guarantee here
+        // so pathological documents (all blank lines, control chars only) can
+        // never produce a zero-information chunk that pollutes the index.
+        return packed
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .enumerated().map { idx, text in
+                Passage(id: "\(document.id)#\(idx)",
+                        documentID: document.id,
+                        documentTitle: document.title,
+                        index: idx,
+                        text: text)
+            }
     }
 
     /// Split on one-or-more blank lines into paragraph blocks.
@@ -69,7 +75,7 @@ public struct ParagraphChunker: Chunker {
 
     /// Slice a string into chunks of at most `max` characters, preferring to
     /// break on whitespace so words aren't cut in half.
-    static func slice(_ s: String, max: Int) -> [String] {
+    public static func slice(_ s: String, max: Int) -> [String] {
         guard s.count > max else { return [s] }
         var out: [String] = []
         var remaining = Substring(s)
