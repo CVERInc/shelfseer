@@ -38,7 +38,7 @@ struct ContentView: View {
         HStack(spacing: CVERSpacing.md) {
             Button("Choose library folder…") { chooseFolder() }
                 .buttonStyle(.cver())
-                .disabled(model.isIndexing)
+                .disabled(model.isBusy)
 
             statusLabel
             Spacer()
@@ -92,7 +92,7 @@ struct ContentView: View {
 
             Button("Ask") { model.ask() }
                 .buttonStyle(.cver())
-                .disabled(!model.canAsk || model.isAnswering)
+                .disabled(!model.canAsk)
         }
     }
 

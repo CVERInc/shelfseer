@@ -39,8 +39,14 @@ final class LibraryModel: ObservableObject {
         return false
     }
 
+    /// True while either an index build or a question is in flight. Both
+    /// user-triggered actions (folder picker, ask) must check this together —
+    /// otherwise starting one while the other is running hands the user a
+    /// stale answer or an index built out from under an in-flight question.
+    var isBusy: Bool { isIndexing || isAnswering }
+
     var canAsk: Bool {
-        librarianReady && !question.trimmingCharacters(in: .whitespaces).isEmpty
+        !isBusy && librarianReady && !question.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     private var librarianReady: Bool {
@@ -50,6 +56,7 @@ final class LibraryModel: ObservableObject {
 
     /// Pick a folder and (re)build the index from it.
     func openLibrary(at folder: URL) {
+        guard !isBusy else { return }
         folderName = folder.lastPathComponent
         answer = nil
         phase = .indexing(done: 0, total: 0)
@@ -79,7 +86,7 @@ final class LibraryModel: ObservableObject {
     /// Ask the current question against the indexed library.
     func ask() {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty, librarianReady else { return }
+        guard !q.isEmpty, librarianReady, !isBusy else { return }
         isAnswering = true
         Task.detached { [librarian] in
             let result = await librarian.ask(q)
